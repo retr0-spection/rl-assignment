@@ -48,3 +48,4 @@ dependencies:
       - sympy==1.14.0
       - torch==2.8.0
       - typing-extensions==4.15.0
+      - gym==0.21.0
