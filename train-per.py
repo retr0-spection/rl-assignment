@@ -4,8 +4,13 @@ import argparse
 from stable_baselines3.common.monitor import Monitor
 from sb3_contrib import QRDQN
 import crafter
+import json
+import numpy as np
+from collections import defaultdict
+import csv
+import matplotlib.pyplot as plt
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "mps"
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--outdir', default='logdir/crafter_qrdqn', help="Directory to save logs and model")
@@ -19,6 +24,54 @@ os.makedirs(args.outdir, exist_ok=True)
 # ---------------------
 # ENVIRONMENT HELPERS
 # ---------------------
+#
+
+def evaluate_crafter(eval_dir):
+    stats_path = os.path.join(eval_dir, "stats.jsonl")
+    if not os.path.exists(stats_path):
+        raise FileNotFoundError(f"No stats.jsonl file found in {eval_dir}. Did you enable recording?")
+
+    # Load episode stats
+    episodes = []
+    with open(stats_path, "r") as f:
+        for line in f:
+            episodes.append(json.loads(line))
+
+    # Compute aggregate metrics
+    rewards = [ep.get("reward", 0) for ep in episodes]
+    lengths = [ep.get("length", 0) for ep in episodes]
+
+    reward_mean = float(np.mean(rewards))
+    length_mean = float(np.mean(lengths))
+
+    # --- Aggregate achievements ---
+    achievements = defaultdict(float)
+    for ep in episodes:
+        # 1. Case: nested achievements dict
+        if "achievements" in ep:
+            for k, v in ep["achievements"].items():
+                achievements[k] += v
+        # 2. Case: flattened keys like "achievement_*"
+        else:
+            for k, v in ep.items():
+                if k.startswith("achievement_"):
+                    achievements[k] += v
+
+    # Normalize over number of episodes
+    for k in achievements:
+        achievements[k] /= len(episodes)
+
+    # Geometric mean score (like Crafter’s original logic)
+    eps = 1e-8
+    score = float(np.exp(np.mean([np.log(max(eps, v)) for v in achievements.values()]))) if achievements else 0.0
+
+    return {
+        "reward_mean": reward_mean,
+        "length_mean": length_mean,
+        "score": score,
+        "achievements": dict(achievements),
+    }
+
 
 def make_train_env():
     """Return a monitored training env"""
@@ -94,7 +147,7 @@ def evaluate_agent(model, episodes=50):
             obs, reward, done, info = eval_env.step(action)
     eval_env.close()
 
-    stats = crafter.evaluate(eval_dir)
+    stats = evaluate_crafter(eval_dir)
     print("\n=== Evaluation Metrics ===")
     print(f"Geometric Mean Score: {stats['score']:.4f}")
     print(f"Average Survival Time: {stats['length_mean']:.2f}")
@@ -125,6 +178,28 @@ def evaluate_agent(model, episodes=50):
 # ---------------------
 # PLOTTING
 # ---------------------
+def plot_metrics(stats, outdir):
+    plt.figure(figsize=(8, 4))
+    achievements = list(stats['achievements'].keys())
+    rates = [v * 100 for v in stats['achievements'].values()]
+    plt.barh(achievements, rates, color='skyblue')
+    plt.xlabel('Unlock Rate (%)')
+    plt.title('Crafter Achievement Unlock Rates')
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, 'achievements.png'))
+    plt.close()
+
+    # Summary plot
+    plt.figure(figsize=(6, 4))
+    plt.bar(['Geometric Mean', 'Survival Time', 'Cumulative Reward'],
+            [stats['score'], stats['length_mean'], stats['reward_mean']],
+            color=['orange', 'green', 'blue'])
+    plt.title('Evaluation Summary')
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, 'summary.png'))
+    plt.close()
+    print(f"Saved plots to {outdir}")
+
 
 
 # ---------------------
@@ -133,7 +208,8 @@ def evaluate_agent(model, episodes=50):
 
 if __name__ == '__main__':
     print("Starting QR-DQN training procedure")
-    model = train_qrdqn()
+    # model = train_qrdqn()
+    model = QRDQN.load("./logdir/crafter_qrdqn/qrdqn_4500000.zip")
     print("Finished training, starting evaluation")
     evaluate_agent(model, episodes=args.eval_episodes)
     print("Evaluation complete.")
