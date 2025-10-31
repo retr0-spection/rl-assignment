@@ -3,10 +3,14 @@ import stable_baselines3 as sb3
 import crafter
 import torch
 import os
+import argparse
+import csv
+import matplotlib.pyplot as plt
 
+device = "mps"
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--outdir', default='logdir/crafter_dqn')
+parser.add_argument('--outdir', default='logdir/crafter_dqn_improved')
 parser.add_argument('--steps', type=int, default=500_000)
 parser.add_argument('--eval_episodes', type=int, default=50)
 args = parser.parse_args()
@@ -95,11 +99,33 @@ def evaluate_agent(model, episodes=50):
     return stats
 
 
+# --- PLOTTING ---
+def plot_metrics(stats, outdir):
+    plt.figure(figsize=(8, 4))
+    achievements = list(stats['achievements'].keys())
+    rates = [v * 100 for v in stats['achievements'].values()]
+    plt.barh(achievements, rates, color='skyblue')
+    plt.xlabel('Unlock Rate (%)')
+    plt.title('Crafter Achievement Unlock Rates')
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, 'achievements.png'))
+    plt.close()
+
+    # Summary plot
+    plt.figure(figsize=(6, 4))
+    plt.bar(['Geometric Mean', 'Survival Time', 'Cumulative Reward'],
+            [stats['score'], stats['length_mean'], stats['reward_mean']],
+            color=['orange', 'green', 'blue'])
+    plt.title('Evaluation Summary')
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, 'summary.png'))
+    plt.close()
+    print(f"Saved plots to {outdir}")
 
 
 if __name__ == '__main__':
     # print("Starting DQN training procedure")
-    # model = train_base_dqn()
+    model = train_base_dqn()
     print("Finished training, starting evaluation")
     evaluate_agent(model, episodes=args.eval_episodes)
     print("Evaluation complete.")
